@@ -36,7 +36,7 @@ module Control.Monad.Trans.Fraxl
   , module Data.GADT.Compare
   -- * Union
   , Union(..)
-  , unconsCoRec
+  , Flap(..)
   ) where
 
 import           Control.Applicative.Free.Fast
@@ -50,7 +50,8 @@ import           Control.Monad.Trans.Fraxl.Free
 import           Data.Dependent.Map             (DMap)
 import qualified Data.Dependent.Map             as DMap
 import           Data.GADT.Compare
-import           Data.Sum
+import           Data.Vinyl
+import           Data.Vinyl.CoRec
 
 -- | Fraxl is based on a particular Freer monad.
 -- This Freer monad has applicative optimization,
@@ -73,7 +74,7 @@ fetchNil ANil = pure ANil
 fetchNil _ = error "Not possible - empty union"
 
 -- | Like '(:)' for constructing @Fetch (Union (f ': r))@
-(|:|) :: forall f r a m. (Monad m)
+(|:|) :: forall f r a m. (Monad m, RecApplicative r, FoldRec r r)
        => (forall a'. Fetch f m a')
        -> (forall a'. Fetch (Union r) m a')
        -> Fetch (Union (f ': r)) m a
@@ -83,8 +84,8 @@ fetchNil _ = error "Not possible - empty union"
            -> ASeq (Union (f ': r)) z
            -> m (ASeq m x, ASeq m y, ASeq m z)
   runUnion flist ulist ANil = (, , ANil) <$> fetch flist <*> fetchU ulist
-  runUnion flist ulist (ACons (Union u) us) = case unconsCoRec u of
-    Left fa -> fmap
+  runUnion flist ulist (ACons (Union u) us) = case restrictCoRec u of
+    Left (Flap fa) -> fmap
       (\(ACons ma ms, other, rest) -> (ms, other, ACons ma rest))
       (runUnion (ACons fa flist) ulist us)
     Right u' -> fmap
@@ -175,30 +176,26 @@ evalCachedFraxl :: forall m f a.
                    => (forall a'. Fetch f m a') -> FreerT f m a -> m a
 evalCachedFraxl fetch a = fst <$> runCachedFraxl fetch a DMap.empty
 
-unconsCoRec :: Sum (t ': ts) f -> Either (t f) (Sum ts f)
-unconsCoRec s = case decompose s of
-  Left s'     -> Right s'
-  Right found -> Left found
-
+newtype Flap a f = Flap (f a)
 
 -- | @Union@ represents a value of any type constructor in @r@ applied with @a@.
-newtype Union ts f = Union (Sum ts f)
+newtype Union r a = Union (CoRec (Flap a) r)
 
 instance GEq (Union '[]) where
   _ `geq` _ = error "Not possible - empty union"
 
-instance (GEq f, GEq (Union r)) => GEq (Union (f ': r)) where
-  Union a `geq` Union b = case (unconsCoRec a, unconsCoRec b) of
-    (Left fa, Left fb)   -> fa `geq` fb
+instance (RecApplicative r, FoldRec r r, GEq f, GEq (Union r)) => GEq (Union (f ': r)) where
+  Union a `geq` Union b = case (restrictCoRec a, restrictCoRec b) of
+    (Left (Flap fa), Left (Flap fb))   -> fa `geq` fb
     (Right a', Right b') -> Union a' `geq` Union b'
     _                    -> Nothing
 
 instance GCompare (Union '[]) where
   _ `gcompare` _ = error "Not possible - empty union"
 
-instance (GCompare f, GCompare (Union r)) => GCompare (Union (f ': r)) where
-  Union a `gcompare` Union b = case (unconsCoRec a, unconsCoRec b) of
-    (Left fa, Left fb)   -> fa `gcompare` fb
+instance (RecApplicative r, FoldRec r r, GCompare f, GCompare (Union r)) => GCompare (Union (f ': r)) where
+  Union a `gcompare` Union b = case (restrictCoRec a, restrictCoRec b) of
+    (Left (Flap fa), Left (Flap fb))   -> fa `gcompare` fb
     (Right a', Right b') -> Union a' `gcompare` Union b'
     (Left _, Right _)    -> GLT
     (Right _, Left _)    -> GGT

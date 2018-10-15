@@ -4,5 +4,5 @@ packages:
 - '.'
 extra-deps:
 - type-aligned-0.9.6
-- fastsum-0.1.0.0
+- vinyl-0.10.0
 resolver: lts-12.0
